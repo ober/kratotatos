@@ -1,0 +1,18 @@
+{
+  "claude": [
+    "claude-opus-4-7",
+    "claude-sonnet-4-6",
+    "claude-haiku-4-5-20251001"
+  ],
+  "codex": [
+    "gpt-5",
+    "gpt-5-codex",
+    "o3"
+  ],
+  "opencode": [
+    "anthropic/claude-sonnet-4-5",
+    "anthropic/claude-opus-4-5",
+    "openai/gpt-5",
+    "google/gemini-2.5-pro"
+  ]
+}
