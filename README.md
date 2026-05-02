@@ -81,27 +81,19 @@ listed there can still be used via `--models provider:model` or by pressing
 `↑/↓` (or `j`/`k`) — move · `SPACE` — toggle · `a` — toggle all in current
 provider · `c` — add custom entry · `ENTER` — run · `q` — cancel
 
-## Notes on isolation
+## Sandboxing (on by default)
 
-Each agent runs with its CWD set to its private workspace (`runs/.../repo/`).
-codex uses its built-in `--sandbox workspace-write` policy. claude is run
-with `--dangerously-skip-permissions` (no prompts) and trusts the prompt
-constraint to stay in cwd. opencode uses `--dir` and its own permission
-config. By default these are *cwd-by-convention* — a misbehaving agent
-could still read `~/.ssh`, `~/.aws`, `~/.config/gh`, etc.
+Every runner subprocess is wrapped in an OS-level sandbox. **No opt-in
+required** — kratotatos will not run an agent with full access to your
+home directory.
 
-### Hard sandboxing (`KRATOTATOS_SANDBOX=1`)
-
-Set `KRATOTATOS_SANDBOX=1` to wrap every runner subprocess in an OS-level
-sandbox:
-
-- **macOS**: `sandbox-exec -f <profile.sb>` (Apple Seatbelt — same primitive
-  codex uses internally for `workspace-write`)
+- **macOS**: `sandbox-exec -f <profile.sb>` (Apple Seatbelt — same
+  primitive codex uses internally for `--sandbox workspace-write`)
 - **Linux**: `bwrap` with `--tmpfs $HOME` + bind mounts for the workspace
   and the per-CLI config dir; `--unshare-pid --unshare-uts --unshare-ipc
   --new-session --die-with-parent --share-net`
 
-The sandbox allows:
+Allowed:
 - read+write inside the per-run workspace
 - read+write of the CLI's own auth/config dir (`~/.claude`, `~/.codex`,
   `~/.gemini`, `~/.config/opencode`, `~/.local/share/opencode`,
@@ -110,15 +102,14 @@ The sandbox allows:
   `git`
 - full network (agents need to reach their API endpoints)
 
-The sandbox denies (by default-deny on macOS, by tmpfs-over-`$HOME` on
-Linux): `~/.ssh`, `~/.aws`, `~/.config/gh`, `~/.netrc`, `~/.gnupg`, browser
-data, the macOS Keychain, every other CLI's tokens, every other directory
-under `$HOME`. On Linux the env is also scrubbed: only a small allowlist
-of `PATH`/`HOME`/`*_API_KEY` variables propagates into the sandbox.
+Denied (by default-deny on macOS, by tmpfs-over-`$HOME` on Linux):
+`~/.ssh`, `~/.aws`, `~/.config/gh`, `~/.netrc`, `~/.gnupg`, browser data,
+the macOS Keychain, every other CLI's tokens, every other directory under
+`$HOME`. On Linux the env is also scrubbed: only a small allowlist of
+`PATH`/`HOME`/`*_API_KEY` variables propagates into the sandbox.
 
-If `KRATOTATOS_SANDBOX=1` is set but `sandbox-exec` / `bwrap` is missing,
-runs fail loudly (`SandboxError`) rather than silently falling back to
-unsandboxed execution. Prereqs:
+If `sandbox-exec` / `bwrap` is missing, runs fail loudly (`SandboxError`)
+rather than silently falling back to unsandboxed execution. Prereqs:
 
 ```sh
 # macOS — already installed (sandbox-exec ships with the OS)
@@ -129,4 +120,11 @@ sudo dnf install bubblewrap   # Fedora / RHEL
 
 The generated profile (macOS) is written to each run's
 `<provider>__<model>/sandbox.sb` for inspection.
+
+### Escape hatch
+
+Set `KRATOTATOS_SANDBOX=0` (or `=off`/`=false`/`=no`) to disable the
+sandbox — for debugging the harness itself, or for a deliberately-trusted
+local model run. A loud warning is printed to stderr so the unsandboxed
+run is unambiguous in the logs. Use sparingly.
 # kratotatos

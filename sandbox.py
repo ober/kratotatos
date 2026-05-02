@@ -1,8 +1,6 @@
 """External OS-level sandboxing for runner subprocesses.
 
-The default kratotatos run gives every agent CLI full access to the user's
-home directory (``~/.ssh``, ``~/.aws``, browser cookie jars, etc.). Setting
-``KRATOTATOS_SANDBOX=1`` wraps every runner subprocess in:
+Every runner subprocess is wrapped — by default, with no opt-in needed — in:
 
   - macOS: ``sandbox-exec -f <profile.sb>`` (Apple's Seatbelt mechanism — the
     same primitive codex uses internally for ``--sandbox workspace-write``)
@@ -18,27 +16,50 @@ Both sandboxes:
   - **deny** everything else under ``$HOME`` — credentials, ssh keys, gh
     tokens, browser data, other CLIs' tokens
 
-If the sandbox is requested but the wrapper binary (``sandbox-exec`` /
-``bwrap``) is missing, ``wrap_command`` raises ``SandboxError`` so the run
-fails loud rather than silently dropping to unsandboxed execution.
+If the sandbox tool (``sandbox-exec`` / ``bwrap``) is missing,
+``wrap_command`` raises ``SandboxError`` so the run fails loud rather than
+silently dropping to unsandboxed execution.
+
+Setting ``KRATOTATOS_SANDBOX=0`` (or ``=off``/``=false``/``=no``) is the
+only escape hatch — it disables the sandbox and prints a loud warning to
+stderr so the unsandboxed run is unambiguous in the logs.
 """
 from __future__ import annotations
 
 import os
 import platform
 import shutil
+import sys
 from pathlib import Path
 from typing import Iterable, Optional
 
 
 class SandboxError(RuntimeError):
-    """Raised when sandboxing was requested but cannot be applied."""
+    """Raised when sandboxing cannot be applied (e.g. missing wrapper)."""
+
+
+_DISABLE_VALUES = ("0", "false", "no", "off")
+_warned_disabled = False
 
 
 def is_enabled() -> bool:
-    """``KRATOTATOS_SANDBOX=1`` (or any non-empty/non-zero value) opts in."""
+    """Sandbox is on by default. Returns False ONLY when
+    ``KRATOTATOS_SANDBOX`` is explicitly set to ``0``/``false``/``no``/``off``.
+    """
     val = os.environ.get("KRATOTATOS_SANDBOX", "").strip().lower()
-    return val not in ("", "0", "false", "no", "off")
+    if val in _DISABLE_VALUES:
+        global _warned_disabled
+        if not _warned_disabled:
+            print(
+                "[kratotatos] WARNING: sandbox disabled via KRATOTATOS_SANDBOX="
+                f"{val!r}. Agent subprocesses will run with full access to "
+                "your home directory (~/.ssh, ~/.aws, etc.).",
+                file=sys.stderr,
+                flush=True,
+            )
+            _warned_disabled = True
+        return False
+    return True
 
 
 def _platform() -> str:
