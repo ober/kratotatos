@@ -401,9 +401,133 @@ def run_opencode(
     return result
 
 
+# ---------------------------------------------------------------------------
+# Gemini runner
+# ---------------------------------------------------------------------------
+
+def _extract_trailing_json(text: str) -> Optional[dict[str, Any]]:
+    """Find the last brace-balanced JSON object in ``text``. Gemini's JSON
+    output is followed by a noisy "Shell cwd was reset" line, and there is
+    no JSONL framing, so we scan for the outer ``{...}`` block.
+    """
+    depth = 0
+    start = -1
+    last: Optional[str] = None
+    in_str = False
+    esc = False
+    for i, ch in enumerate(text):
+        if in_str:
+            if esc:
+                esc = False
+            elif ch == "\\":
+                esc = True
+            elif ch == '"':
+                in_str = False
+            continue
+        if ch == '"':
+            in_str = True
+            continue
+        if ch == "{":
+            if depth == 0:
+                start = i
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0 and start >= 0:
+                last = text[start : i + 1]
+                start = -1
+    if last is None:
+        return None
+    try:
+        return json.loads(last)
+    except json.JSONDecodeError:
+        return None
+
+
+def run_gemini(
+    *,
+    repo_dir: Path,
+    log_dir: Path,
+    model: str,
+    problem: str,
+    timeout: int,
+) -> RunResult:
+    """Run ``gemini -p ... -o json`` in YOLO/skip-trust mode so the agent can
+    edit the workspace autonomously. Token counts come from the trailing
+    ``stats.models[<model>].tokens`` block.
+    """
+    label = f"gemini/{model}"
+    result = RunResult(
+        provider="gemini",
+        model=model,
+        label=label,
+        workdir=str(repo_dir),
+        log_dir=str(log_dir),
+    )
+    if shutil.which("gemini") is None:
+        result.error = "gemini CLI not found in PATH"
+        return result
+
+    user_prompt = f"{SYSTEM_PROMPT}\n\n---\n\n{problem}"
+    cmd = [
+        "gemini",
+        "-p",
+        user_prompt,
+        "-m",
+        model,
+        "-o",
+        "json",
+        "--yolo",
+        "--skip-trust",
+    ]
+
+    exit_code, timed_out, wall, stdout_path = _spawn(
+        cmd,
+        cwd=repo_dir,
+        log_dir=log_dir,
+        timeout=timeout,
+        env_extra={"GEMINI_CLI_TRUST_WORKSPACE": "true"},
+    )
+    result.exit_code = exit_code
+    result.timed_out = timed_out
+    result.wall_seconds = wall
+
+    try:
+        stdout = Path(stdout_path).read_text(errors="replace")
+    except OSError:
+        stdout = ""
+
+    payload = _extract_trailing_json(stdout)
+    if isinstance(payload, dict):
+        result.final_message = str(payload.get("response") or "")
+        stats = payload.get("stats") if isinstance(payload.get("stats"), dict) else {}
+        models_stats = stats.get("models") if isinstance(stats.get("models"), dict) else {}
+        # Prefer the requested model's stats; fall back to the first key.
+        model_block = models_stats.get(model)
+        if not isinstance(model_block, dict) and models_stats:
+            model_block = next(iter(models_stats.values()))
+        if isinstance(model_block, dict):
+            tokens = model_block.get("tokens") or {}
+            api = model_block.get("api") or {}
+            prompt_tok = int(tokens.get("prompt") or 0)
+            cached_tok = int(tokens.get("cached") or 0)
+            result.input_tokens = max(0, prompt_tok - cached_tok)
+            result.cache_read_tokens = cached_tok
+            result.output_tokens = int(tokens.get("candidates") or 0)
+            result.reasoning_tokens = int(tokens.get("thoughts") or 0)
+            result.num_turns = int(api.get("totalRequests") or 0)
+
+    if exit_code != 0 and not result.error:
+        result.error = f"gemini exited with code {exit_code}"
+    if timed_out:
+        result.error = (result.error or "") + " (timed out)"
+    return result
+
+
 RUNNERS = {
     "claude": run_claude,
     "codex": run_codex,
+    "gemini": run_gemini,
     "opencode": run_opencode,
 }
 

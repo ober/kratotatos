@@ -8,11 +8,12 @@ satisfies the success criteria.
 
 ## Supported agents
 
-| Provider   | CLI         | Sandbox                            |
-|------------|-------------|------------------------------------|
-| `claude`   | `claude -p` | `--dangerously-skip-permissions` + cwd |
-| `codex`    | `codex exec`| `--sandbox workspace-write` (native) |
-| `opencode` | `opencode run` | cwd via `--dir` (relies on opencode permissions) |
+| Provider   | CLI            | Used for                       | Sandbox                                              |
+|------------|----------------|--------------------------------|------------------------------------------------------|
+| `claude`   | `claude -p`    | Anthropic (Opus / Sonnet)      | `--dangerously-skip-permissions` + cwd               |
+| `codex`    | `codex exec`   | OpenAI (gpt-5 family)          | `--sandbox workspace-write` (native)                 |
+| `gemini`   | `gemini -p`    | Google (Gemini 2.5 / 3 family) | `--yolo --skip-trust` + cwd                          |
+| `opencode` | `opencode run` | DeepSeek, z-ai (GLM), others   | cwd via `--dir` (relies on opencode permissions)     |
 
 Each runner is invoked with the model's batch / non-interactive mode and
 asked to emit JSON events so token usage and (when available) cost can be
@@ -23,7 +24,7 @@ read from stdout.
 - Python 3.11+
 - `git` on `$PATH`
 - Whichever agent CLIs you want to use, already authenticated:
-  `claude`, `codex`, `opencode`
+  `claude`, `codex`, `gemini`, `opencode`
 - Optional: `bwrap` if you ever extend this with hard isolation
 
 ## Usage
