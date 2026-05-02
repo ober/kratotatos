@@ -1,9 +1,14 @@
-"""Subprocess wrappers for claude, codex, opencode.
+"""Subprocess wrappers for claude, codex, gemini, opencode.
 
 Each runner spawns the underlying CLI in non-interactive mode, streams output
 to a log directory, and parses the tool's structured output for token and
 cost metrics. The wrappers share a common return shape (``RunResult``) so the
 orchestrator and report layers do not need to special-case each provider.
+
+If ``KRATOTATOS_SANDBOX=1`` is set in the environment, every runner's command
+is wrapped with sandbox-exec (macOS) or bwrap (Linux) so the agent can only
+read/write the per-run workspace and its own CLI config dir — see
+``sandbox.py`` for the full allow/deny matrix.
 """
 from __future__ import annotations
 
@@ -17,6 +22,8 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Optional
 
+import sandbox
+
 
 SYSTEM_PROMPT = """\
 You are running inside a sandboxed copy of a software repository. Make changes \
@@ -25,6 +32,24 @@ outside this directory. Work autonomously: do not ask clarifying questions; \
 make reasonable assumptions and proceed. The user's task and its success \
 criteria are below. When you believe the task is complete, exit.\
 """
+
+
+# Per-CLI paths that need to remain reachable inside the sandbox so the
+# agent can read its auth token, write session state, etc. Anything not
+# listed here gets denied by the sandbox profile (when KRATOTATOS_SANDBOX=1).
+_HOME = Path.home()
+
+_CLI_PATHS = {
+    "claude":   [_HOME / ".claude",
+                 _HOME / "Library" / "Application Support" / "claude"],
+    "codex":    [_HOME / ".codex",
+                 _HOME / ".config" / "codex"],
+    "gemini":   [_HOME / ".gemini",
+                 _HOME / ".config" / "gemini"],
+    "opencode": [_HOME / ".config" / "opencode",
+                 _HOME / ".local" / "share" / "opencode",
+                 _HOME / ".cache" / "opencode"],
+}
 
 
 @dataclass
@@ -69,17 +94,26 @@ def _spawn(
     log_dir: Path,
     timeout: int,
     env_extra: Optional[dict[str, str]] = None,
+    cli_paths: Optional[list[Path]] = None,
 ) -> tuple[int, bool, float, str]:
     """Run ``cmd``, streaming stdout/stderr to log files. Returns (exit_code,
     timed_out, wall_seconds, stdout_path).
 
     The child process is placed in its own process group so we can kill the
     entire tree if the timeout fires (subagent CLIs commonly fork helpers).
+
+    When ``KRATOTATOS_SANDBOX=1`` is set, ``cmd`` is wrapped with the
+    platform's sandbox launcher; ``cli_paths`` is the list of read+write
+    paths under HOME the runner needs to expose (e.g. ``~/.claude``).
     """
     log_dir.mkdir(parents=True, exist_ok=True)
     stdout_path = log_dir / "stdout.log"
     stderr_path = log_dir / "stderr.log"
     cmd_path = log_dir / "command.txt"
+
+    cmd = sandbox.wrap_command(
+        cmd, workspace=cwd, cli_paths=cli_paths or [], log_dir=log_dir
+    )
     cmd_path.write_text(" \\\n  ".join(cmd) + "\n")
 
     env = os.environ.copy()
@@ -175,7 +209,8 @@ def run_claude(
     ]
 
     exit_code, timed_out, wall, _ = _spawn(
-        cmd, cwd=repo_dir, log_dir=log_dir, timeout=timeout
+        cmd, cwd=repo_dir, log_dir=log_dir, timeout=timeout,
+        cli_paths=_CLI_PATHS["claude"],
     )
     result.exit_code = exit_code
     result.timed_out = timed_out
@@ -253,7 +288,8 @@ def run_codex(
     ]
 
     exit_code, timed_out, wall, _ = _spawn(
-        cmd, cwd=repo_dir, log_dir=log_dir, timeout=timeout
+        cmd, cwd=repo_dir, log_dir=log_dir, timeout=timeout,
+        cli_paths=_CLI_PATHS["codex"],
     )
     result.exit_code = exit_code
     result.timed_out = timed_out
@@ -350,7 +386,8 @@ def run_opencode(
     ]
 
     exit_code, timed_out, wall, _ = _spawn(
-        cmd, cwd=repo_dir, log_dir=log_dir, timeout=timeout
+        cmd, cwd=repo_dir, log_dir=log_dir, timeout=timeout,
+        cli_paths=_CLI_PATHS["opencode"],
     )
     result.exit_code = exit_code
     result.timed_out = timed_out
@@ -487,6 +524,7 @@ def run_gemini(
         log_dir=log_dir,
         timeout=timeout,
         env_extra={"GEMINI_CLI_TRUST_WORKSPACE": "true"},
+        cli_paths=_CLI_PATHS["gemini"],
     )
     result.exit_code = exit_code
     result.timed_out = timed_out

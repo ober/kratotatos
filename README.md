@@ -87,6 +87,46 @@ Each agent runs with its CWD set to its private workspace (`runs/.../repo/`).
 codex uses its built-in `--sandbox workspace-write` policy. claude is run
 with `--dangerously-skip-permissions` (no prompts) and trusts the prompt
 constraint to stay in cwd. opencode uses `--dir` and its own permission
-config. For hard filesystem isolation, wrap `kratotatos.py` itself in
-`bwrap` / `firejail` / a container.
+config. By default these are *cwd-by-convention* — a misbehaving agent
+could still read `~/.ssh`, `~/.aws`, `~/.config/gh`, etc.
+
+### Hard sandboxing (`KRATOTATOS_SANDBOX=1`)
+
+Set `KRATOTATOS_SANDBOX=1` to wrap every runner subprocess in an OS-level
+sandbox:
+
+- **macOS**: `sandbox-exec -f <profile.sb>` (Apple Seatbelt — same primitive
+  codex uses internally for `workspace-write`)
+- **Linux**: `bwrap` with `--tmpfs $HOME` + bind mounts for the workspace
+  and the per-CLI config dir; `--unshare-pid --unshare-uts --unshare-ipc
+  --new-session --die-with-parent --share-net`
+
+The sandbox allows:
+- read+write inside the per-run workspace
+- read+write of the CLI's own auth/config dir (`~/.claude`, `~/.codex`,
+  `~/.gemini`, `~/.config/opencode`, `~/.local/share/opencode`,
+  `~/.cache/opencode`, `~/Library/Application Support/claude`)
+- read-only of `~/.gitconfig` and `~/.config/git` so the agent can run
+  `git`
+- full network (agents need to reach their API endpoints)
+
+The sandbox denies (by default-deny on macOS, by tmpfs-over-`$HOME` on
+Linux): `~/.ssh`, `~/.aws`, `~/.config/gh`, `~/.netrc`, `~/.gnupg`, browser
+data, the macOS Keychain, every other CLI's tokens, every other directory
+under `$HOME`. On Linux the env is also scrubbed: only a small allowlist
+of `PATH`/`HOME`/`*_API_KEY` variables propagates into the sandbox.
+
+If `KRATOTATOS_SANDBOX=1` is set but `sandbox-exec` / `bwrap` is missing,
+runs fail loudly (`SandboxError`) rather than silently falling back to
+unsandboxed execution. Prereqs:
+
+```sh
+# macOS — already installed (sandbox-exec ships with the OS)
+# Linux
+sudo apt install bubblewrap   # Debian / Ubuntu
+sudo dnf install bubblewrap   # Fedora / RHEL
+```
+
+The generated profile (macOS) is written to each run's
+`<provider>__<model>/sandbox.sb` for inspection.
 # kratotatos
