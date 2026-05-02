@@ -119,6 +119,7 @@ def judge(
     judge_model: str = "claude-opus-4-7",
     log_dir: Path,
     diff_budget_bytes: int = 60_000,
+    timeout: int = 600,
 ) -> Verdict:
     """Invoke ``claude -p`` as a structured judge. Returns a parsed Verdict.
     On any failure we fall back to a Verdict whose ``rationale`` describes
@@ -171,11 +172,11 @@ def judge(
             cmd,
             capture_output=True,
             text=True,
-            timeout=600,
+            timeout=timeout,
             check=False,
         )
     except subprocess.TimeoutExpired:
-        return Verdict(rationale="judge timed out after 600s")
+        return Verdict(rationale=f"judge timed out after {timeout}s")
 
     (log_dir / "judge_stdout.log").write_text(proc.stdout)
     (log_dir / "judge_stderr.log").write_text(proc.stderr)

@@ -80,6 +80,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Model used by claude for the judge step (default claude-opus-4-7).",
     )
     p.add_argument(
+        "--judge-timeout",
+        type=int,
+        default=600,
+        help="Wall-clock timeout for the judge step, in seconds (default 600 = 10m).",
+    )
+    p.add_argument(
         "--no-judge",
         action="store_true",
         help="Skip the judge step; report metrics only.",
@@ -200,6 +206,7 @@ def main(argv: list[str] | None = None) -> int:
             results=results,
             judge_model=args.judge_model,
             log_dir=run_dir,
+            timeout=args.judge_timeout,
         )
         print(f"[kratotatos] judge winner: {verdict.winner}")
 
